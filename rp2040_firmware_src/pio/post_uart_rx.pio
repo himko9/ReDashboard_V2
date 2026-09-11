@@ -1,0 +1,57 @@
+; RP2040 variable-width POST record receiver:
+; idle high, one start bit, 16-bit LSB-first port, two width bits,
+; 8/16/32-bit LSB-first payload, no parity, two stop bits.
+;
+; OUT32 frames are consumed entirely inside PIO and never enter the DMA ring.
+; Visible OUT8/OUT16 frames push two words: an 18-bit header, then payload.
+.program post_uart_rx
+
+.wrap_target
+start:
+    mov isr, null
+    wait 0 pin 0
+    set y, 0
+    set x, 15 [9]
+port_bits:
+    in pins, 1 [6]
+    jmp x-- port_bits
+
+    ; Width bit 0.
+    in pins, 1
+    jmp pin width0_one
+    nop [5]
+
+    ; Width 00 -> 8-bit payload, or width 10 -> discarded OUT32.
+    in pins, 1
+    jmp pin discard32
+    push block
+    set x, 7 [4]
+capture_payload:
+    in pins, 1 [6]
+    jmp x-- capture_payload
+    jmp !y push_visible
+    jmp start
+push_visible:
+    push block
+    jmp start
+
+width0_one:
+    nop [5]
+    ; Width 01 -> 16-bit payload. Width 11 is invalid.
+    in pins, 1
+    jmp pin bad_frame
+    push block
+    set x, 15
+    nop [2]
+    jmp capture_payload
+
+discard32:
+    mov isr, null
+    set x, 31
+    set y, 1
+    nop [1]
+    jmp capture_payload
+
+bad_frame:
+    jmp start
+.wrap
